@@ -1,20 +1,29 @@
 /*
  * Sends Tello commands over UDP from ESP32 FireBeetle 2 board.
  * 
- * FireBeetle 2 pinout:
- *   https://image.dfrobot.com/image/data/DFR0654-F/Pinout.jpg
+ * Tello SDK:
+ *   https://dl-cdn.ryzerobotics.com/downloads/tello/20180910/Tello%20SDK%20Documentation%20EN_1.3.pdf
+ *   https://dl-cdn.ryzerobotics.com/downloads/Tello/Tello%20SDK%202.0%20User%20Guide.pdf
+ *   https://github.com/damiafuentes/DJITelloPy
  * 
  * Library Required: Adafruit GFX Library (Version 1.11.9)
  *                   Adafruit_ESP32_SH1106 (Version 1.0.2)
  *                   MPU6050_light (Version 1.1.0)
- * 
+ *                   WiFiManager
+ *                   EasyButton (Version 2.0.3)
+ *                     In `EasyButtonTouch.h` comment lines 10--32
+ *
  * License: MIT
  * 
- * Description (using SSD1306 OLED driver):
+ * Description:
  *   https://techexplorations.com/blog/drones/empowering-education-exploring-open-source-hardware-drone-control-with-esp32-and-the-tello-api/
  * 
  * Code:
  *   https://github.com/jsolderitsch/ESP32Controller
+ * 
+ * FireBeetle 2 pinout:
+ *   https://image.dfrobot.com/image/data/DFR0654-F/Pinout.jpg
+ * 
  */
 
 #include "FS.h"
@@ -31,18 +40,18 @@
 
 // Config pins
 // https://image.dfrobot.com/image/data/DFR0654-F/Pinout.jpg
-#define LED_CONN_RED         26
-#define IN_FLIGHT            25
-#define LED_CONN_GREEN       21
-#define LED_BATT_RED         27
-#define LED_BATT_YELLOW      15
-#define LED_BATT_GREEN        4
+#define LED_CONN_RED         17
+#define IN_FLIGHT            16
+#define LED_CONN_GREEN        4
+#define LED_BATT_RED         12
+#define LED_BATT_YELLOW      12
+#define LED_BATT_GREEN       12
 #define COMMAND_TICK         13
 #define UP_PIN               34
-#define TAKEOFF_PIN          33
+#define TAKEOFF_PIN          25
 #define CW_PIN               32
 #define CCW_PIN              39
-#define KILL_PIN             36
+#define KILL_PIN             26
 #define DOWN_PIN             14
 #define BATTERY_CHECK_LIMIT  10
 #define VBATPIN              35
@@ -52,9 +61,10 @@
 File flightFile;
 const char* flightFilePath = "/flight_file.txt";
 
-const float MAX_BATTERY_VOLTAGE = 4.2; // Max LiPoly voltage of a 3.7 battery is 4.2
+// Max LiPoly voltage of a 3.7 battery is 4.2
+const float MAX_BATTERY_VOLTAGE = 4.2;
 
-//IP address to send UDP data to:
+// IP address to send UDP data to:
 // either use the ip address of the server or 
 // a network broadcast address
 const char * udpAddress = "192.168.10.1";
@@ -66,7 +76,7 @@ Adafruit_SH1106 display(OLED_RESET);
 
 MPU6050 mpu(Wire);
 
-WiFiManager wm; // global wm instance
+WiFiManager wm;  // Global wm instance
 
 EasyButton cwButton(CW_PIN);
 EasyButton ccwButton(CCW_PIN);
@@ -86,6 +96,7 @@ int mpuYaw = 0;
 int yaw = 0;
 int throttle = 0;
 
+// Commands: https://dl-cdn.ryzerobotics.com/downloads/Tello/Tello%20SDK%202.0%20User%20Guide.pdf
 String tello_ssid = "";
 String rcCmdBegin = "rc ";
 String rcCmdEnd = " 0 0";
@@ -99,10 +110,10 @@ unsigned long this_since_takeoff = 0;
 unsigned long takeoff_time = 0;
 unsigned long commandDelay = 0;
 
-//The udp library class
+// The UDP library class
 WiFiUDP udp;
 
-//Are we currently connected?
+// Are we currently connected?
 boolean connected;
 boolean in_flight = false;
 boolean in_rc_btn_motion = false;
@@ -114,253 +125,397 @@ int battery_check_tick = 0;
 uint8_t buffer[50];
 
 
-//wifi event handler
-void WiFiEvent(WiFiEvent_t event){
-    switch(event) {
-      case SYSTEM_EVENT_STA_GOT_IP:
-          //When connected set 
-          Serial.print("WiFi connected! IP address: ");
-          Serial.println(WiFi.localIP());
-          digitalWrite(LED_CONN_GREEN,HIGH);
-          digitalWrite(LED_CONN_RED,LOW);  
-          //initializes the UDP state
-          //This initializes the transfer buffer
-          udp.begin(WiFi.localIP(),udpPort);
-          connected = true;
-          run_command("command", 20);
-          run_command("battery?", 20);
-          battery_check_tick = 0;
-          run_command("command", 10);
-          display.clearDisplay();
-          display.setCursor(0, 0);
-          display.println("Tello SSID:");
-          display.println(tello_ssid);
-          display.println("");
-          display.println("Connected!");
-          display.display();
-          delay(2000);
-          run_command("battery?", 10);
-          break;
-      case SYSTEM_EVENT_STA_DISCONNECTED:
-          Serial.println("WiFi lost connection");
-          digitalWrite(LED_CONN_GREEN,LOW);
-          digitalWrite(LED_CONN_RED,HIGH);
-          digitalWrite(LED_BATT_YELLOW, HIGH);
-          digitalWrite(LED_BATT_RED, LOW);
-          digitalWrite(LED_BATT_GREEN, LOW);
-          connected = false;
-          break;
-      default: break;
+void toggle_led(int ledToToggle)
+{
+    // Toggle the state of the LED pin (write the NOT of the current state to the LED pin)
+    digitalWrite(ledToToggle, !digitalRead(ledToToggle));
+}
+
+
+void run_command(String command, int udp_delay_ticks)
+{
+    int packetSize = 0;
+    boolean responseExpected = true;
+
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    digitalWrite(COMMAND_TICK,LOW);
+    Serial.println(command);
+    display.println("Command:");
+    display.println(command);
+    display.display();
+
+    // Special delay cases
+    if (command.indexOf("takeoff") >= 0)
+        udp_delay_ticks = 40;
+    if (command.indexOf("land") >= 0)
+        udp_delay_ticks = 20;
+    if (command.indexOf("rc ") >= 0) {
+        udp_delay_ticks = 0;
+        responseExpected = false;
+        digitalWrite(COMMAND_TICK,HIGH);
+    }
+
+    memset(buffer, 0, 50);
+    command.getBytes(buffer, command.length()+1);
+    // Only send data when connected
+    // Send a packet
+    udp.beginPacket(udpAddress,udpPort);
+    udp.write(buffer, command.length()+1);
+    udp.endPacket();
+    // Serial.println("endPacket called");
+    // Allow for an rc command to not need any further processing after sending.
+    memset(buffer, 0, 50);
+
+    for (int x = 0; x < udp_delay_ticks; x++) {
+        delay(500);
+        toggle_led(COMMAND_TICK);
+        // Serial.print(x);
+        packetSize = udp.parsePacket();
+        if (packetSize)
+            break;
+    }
+
+    // Serial.println("packetSize: " + String(packetSize));
+    if (packetSize && responseExpected) {
+        if (udp.read(buffer, 50) > 0){
+            digitalWrite(COMMAND_TICK,HIGH);
+            String commandResponse = String((char *) buffer);
+            Serial.println(commandResponse);
+            display.println("Response:");
+            display.println(commandResponse);
+            display.display();
+
+            bool parseResponse = (commandResponse.indexOf("error") == -1) && (commandResponse.indexOf("ok") == -1);
+            if (command.equalsIgnoreCase("battery?") && parseResponse) {
+                int battery = commandResponse.toInt();
+                if (battery > 60) {
+                    digitalWrite(LED_BATT_GREEN, HIGH);
+                    digitalWrite(LED_BATT_RED, LOW);
+                    digitalWrite(LED_BATT_YELLOW, LOW);
+                }
+                else if (battery > 20) {
+                    digitalWrite(LED_BATT_GREEN, LOW);
+                    digitalWrite(LED_BATT_RED, LOW);
+                    digitalWrite(LED_BATT_YELLOW, HIGH);
+                }
+                else {
+                    digitalWrite(LED_BATT_GREEN, LOW);
+                    digitalWrite(LED_BATT_RED, HIGH);
+                    digitalWrite(LED_BATT_YELLOW, LOW);
+                }
+            }
+            else if (commandResponse.indexOf("timeout") >= 0) {
+                digitalWrite(COMMAND_TICK,LOW);
+                Serial.println("Command timed out, ignoring for now");
+            }
+        }
+        else {
+            digitalWrite(COMMAND_TICK,LOW);
+            command_error = true;
+        }
+    }
+    else if (in_flight && responseExpected) {
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println("No command response: ");
+        display.println("Landing NOW!");
+        display.display();
+        command_error = true;
+    }
+    // delay(100);   
+}
+
+
+// Wifi event handler
+void WiFiEvent(WiFiEvent_t event)
+{
+    switch (event) {
+        case SYSTEM_EVENT_STA_GOT_IP:
+            // When connected set 
+            Serial.print("WiFi connected! IP address: ");
+            Serial.println(WiFi.localIP());
+            digitalWrite(LED_CONN_GREEN, HIGH);
+            digitalWrite(LED_CONN_RED, LOW);
+
+            // Initializes the UDP state
+            // This initializes the transfer buffer
+            udp.begin(WiFi.localIP(),udpPort);
+            connected = true;
+            run_command("command", 20);
+            run_command("battery?", 20);
+            battery_check_tick = 0;
+            run_command("command", 10);
+
+            display.clearDisplay();
+            display.setCursor(0, 0);
+            display.println("Tello SSID:");
+            display.println(tello_ssid);
+            display.println("");
+            display.println("Connected!");
+            display.display();
+            delay(2000);
+            run_command("battery?", 10);
+        break;
+
+        case SYSTEM_EVENT_STA_DISCONNECTED:
+            Serial.println("WiFi lost connection");
+            digitalWrite(LED_CONN_GREEN, LOW);
+            digitalWrite(LED_CONN_RED, HIGH);
+            digitalWrite(LED_BATT_YELLOW, HIGH);
+            digitalWrite(LED_BATT_RED, LOW);
+            digitalWrite(LED_BATT_GREEN, LOW);
+            connected = false;
+        break;
+    
+        default:
+        break;
     }
 }
 
-void writeFile(fs::FS &fs, const char * path, const char * message){
+
+void writeFile(fs::FS &fs, const char * path, const char * message)
+{
     Serial.printf("Writing file: %s\r\n", path);
 
     File file = fs.open(path, FILE_WRITE);
-    if(!file){
+    if (!file) {
         Serial.println("- failed to open file for writing");
         return;
     }
-    if(file.print(message)){
+    if (file.print(message)) {
         Serial.println("- file written");
-    } else {
+    }
+    else {
         Serial.println("- write failed");
     }
     file.close();
 }
 
-void appendFile(fs::FS &fs, const char * path, const char * message){
+
+void appendFile(fs::FS &fs, const char * path, const char * message)
+{
     Serial.printf("Appending to file: %s\r\n", path);
 
     File file = fs.open(path, FILE_APPEND);
-    if(!file){
+    if (!file) {
         Serial.println("- failed to open file for appending");
         return;
     }
-    if(file.print(message)){
+    if (file.print(message)) {
         Serial.println("- message appended");
-    } else {
+    }
+    else {
         Serial.println("- append failed");
     }
     file.close();
 }
 
 
-void deleteFile(fs::FS &fs, const char * path){
+void deleteFile(fs::FS &fs, const char * path)
+{
     Serial.printf("Deleting file: %s\r\n", path);
-    if(fs.remove(path)){
+    if (fs.remove(path)) {
         Serial.println("- file deleted");
-    } else {
+    }
+    else {
         Serial.println("- delete failed");
     }
 }
 
-void appendLastCommand() {
-   this_since_takeoff = (millis() - takeoff_time);
-   commandDelay = this_since_takeoff - last_since_takeoff;
-   last_since_takeoff = this_since_takeoff;
-   lastCommand = lastCommand + "," + commandDelay + "\n" ;
-   appendFile(SPIFFS, flightFilePath, lastCommand.c_str());
+
+void appendLastCommand()
+{
+    this_since_takeoff = (millis() - takeoff_time);
+    commandDelay = this_since_takeoff - last_since_takeoff;
+    last_since_takeoff = this_since_takeoff;
+    lastCommand = lastCommand + "," + commandDelay + "\n";
+    appendFile(SPIFFS, flightFilePath, lastCommand.c_str());
 }
 
-void processCommand(String command) {
-  appendLastCommand();
-  if (in_rc_btn_motion) {
-    run_command("rc 0 0 0 0", 0);
-    lastCommand = "rc 0 0 0 0";
-    in_rc_btn_motion = false;
-  } else {
-    run_command(command, 0);
-    lastCommand = command;
-    in_rc_btn_motion = true;
-  }
-  battery_check_tick++;
-}
 
-void processSerialCommand(String command) {
-  appendLastCommand();
-//  Serial.println(command);
-  run_command(command, 20);
-  lastCommand = command;
-  battery_check_tick++;
-}
-
-void processFlightReplay() {
-  flightFile = SPIFFS.open(flightFilePath, FILE_READ);
-  if (flightFile) {
-    Serial.println("Start of Flight File...");
-    digitalWrite(IN_FLIGHT,HIGH);
-    in_flight = true;
-    while(flightFile.available()) {
-        String command = flightFile.readStringUntil('\n');
-        int commaPosition = command.indexOf(',');
-        if (commaPosition != -1) {
-          run_command(command.substring(0, commaPosition), 20);
-          commandDelay = command.substring(commaPosition + 1, command.length()).toInt();
-          // Serial.println(command);
-          // Serial.println(command.substring(0, commaPosition));
-          // Serial.println(commandDelay);
-          delay(commandDelay);
-          // delay(500);
-        } else {
-          run_command(command, 40);
-          // delay(500);
-          // Serial.println(command);
-        }
+void processCommand(String command)
+{
+    appendLastCommand();
+    if (in_rc_btn_motion) {
+        run_command("rc 0 0 0 0", 0);
+        lastCommand = "rc 0 0 0 0";
+        in_rc_btn_motion = false;
     }
-    digitalWrite(IN_FLIGHT,LOW);
-    in_flight = false;
-    Serial.println("... end of Flight File");
-    flightFile.close();
-  }
+    else {
+        run_command(command, 0);
+        lastCommand = command;
+        in_rc_btn_motion = true;
+    }
+    battery_check_tick++;
 }
+
+
+void processSerialCommand(String command)
+{
+    appendLastCommand();
+    // Serial.println(command);
+    run_command(command, 20);
+    lastCommand = command;
+    battery_check_tick++;
+}
+
+
+void processFlightReplay()
+{
+    flightFile = SPIFFS.open(flightFilePath, FILE_READ);
+    if (flightFile) {
+        Serial.println("Start of Flight File...");
+        digitalWrite(IN_FLIGHT,HIGH);
+        in_flight = true;
+
+        while (flightFile.available()) {
+            String command = flightFile.readStringUntil('\n');
+            int commaPosition = command.indexOf(',');
+            if (commaPosition != -1) {
+                run_command(command.substring(0, commaPosition), 20);
+                commandDelay = command.substring(commaPosition + 1, command.length()).toInt();
+                // Serial.println(command);
+                // Serial.println(command.substring(0, commaPosition));
+                // Serial.println(commandDelay);
+                delay(commandDelay);
+                // delay(500);
+            }
+            else {
+                run_command(command, 40);
+                // delay(500);
+                // Serial.println(command);
+            }
+        }
+        digitalWrite(IN_FLIGHT,LOW);
+        in_flight = false;
+        Serial.println("... end of Flight File");
+        flightFile.close();
+    }
+}
+
 
 // Callbacks
-
 void onResetWiFiButtonPressed()
 { 
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.println("Controller WiFi Reset");
-  display.println("Use ManageTello AP");
-  display.println("On Phone or Computer");
-  display.println("To Connect to Tello");
-  display.display();
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("Controller WiFi Reset");
+    display.println("Use ManageTello AP");
+    display.println("On Phone or Computer");
+    display.println("To Connect to Tello");
+    display.display();
 
-  Serial.println("Kill Button Double Pressed");
-  Serial.println("Erasing WiFi Config, restarting...");
-  wm.resetSettings();
-  ESP.restart();      
-}
-
-void onCWButtonPressed() {
-  if (in_flight) {
-    Serial.println("CW button is pressed");
-    processCommand("rc 0 0 0 50");
-  }
-}
-
-void onCCWButtonPressed() {
-  if (in_flight) {
-    Serial.println("CCW button is pressed");
-    processCommand("rc 0 0 0 -50");
-  }
+    Serial.println("Kill Button Double Pressed");
+    Serial.println("Erasing WiFi Config, restarting...");
+    wm.resetSettings();
+    ESP.restart();      
 }
 
 
-void onUpButtonPressed() {
-  if (in_flight) {
-    Serial.println("UP button is pressed");
-    processCommand("rc 0 0 30 0");
-  }
+void onCWButtonPressed()
+{
+    if (in_flight) {
+        Serial.println("CW button is pressed");
+        processCommand("rc 0 0 0 50");
+    }
 }
 
-void onDownButtonPressed() {
-  if (in_flight) {
-    Serial.println("DOWN button is pressed");
-    processCommand("rc 0 0 -30 0");
-  }
+
+void onCCWButtonPressed()
+{
+    if (in_flight) {
+        Serial.println("CCW button is pressed");
+        processCommand("rc 0 0 0 -50");
+    }
 }
 
-void onKillButtonPressed() {
+
+void onUpButtonPressed()
+{
+    if (in_flight) {
+        Serial.println("UP button is pressed");
+        processCommand("rc 0 0 30 0");
+    }
+}
+
+
+void onDownButtonPressed()
+{
+    if (in_flight) {
+        Serial.println("DOWN button is pressed");
+        processCommand("rc 0 0 -30 0");
+    }
+}
+
+
+void onKillButtonPressed()
+{
     Serial.println("KILL button is pressed");
     if (!connected) {
-      Serial.println("Kill Button Pressed, no connection");
-      Serial.println("Enabling OTA Update");
-      Serial.println("Perform Update in browser tab or window");
-      Serial.println("Clearing recent Tello SSID and restarting.");
-      wm.resetSettings();
-      ESP.restart();  
+        Serial.println("Kill Button Pressed, no connection");
+        Serial.println("Enabling OTA Update");
+        Serial.println("Perform Update in browser tab or window");
+        Serial.println("Clearing recent Tello SSID and restarting.");
+        wm.resetSettings();
+        ESP.restart();  
     }
     if (in_flight) {
-      run_command("emergency", 10);
-      battery_check_tick++;
-      digitalWrite(IN_FLIGHT,LOW);
-      in_flight = false;
-      deleteFile(SPIFFS, flightFilePath);
-    } else {
-      processFlightReplay();
+        run_command("emergency", 10);
+        battery_check_tick++;
+        digitalWrite(IN_FLIGHT,LOW);
+        in_flight = false;
+        deleteFile(SPIFFS, flightFilePath);
+    }
+    else {
+        processFlightReplay();
     }
 }
 
-void processLand () {
-  appendLastCommand();
-  run_command("land", 20);
-  appendFile(SPIFFS, flightFilePath, "land,2\n");
-  appendFile(SPIFFS, flightFilePath, "battery?,2\n");
-  digitalWrite(IN_FLIGHT,LOW);
-  in_flight = false;
+
+void processLand()
+{
+    appendLastCommand();
+    run_command("land", 20);
+    appendFile(SPIFFS, flightFilePath, "land,2\n");
+    appendFile(SPIFFS, flightFilePath, "battery?,2\n");
+    digitalWrite(IN_FLIGHT,LOW);
+    in_flight = false;
 }
 
-void processTakeoff () {
-  writeFile(SPIFFS, flightFilePath, "command,2\n");
-  appendFile(SPIFFS, flightFilePath, "battery?,2\n");
-  run_command("takeoff", 40);
-  digitalWrite(IN_FLIGHT,HIGH);
-  takeoff_time = millis();
-  last_since_takeoff = 0;
-  in_flight = true;
-  lastCommand = "takeoff";
-  appendLastCommand(); // will be takeoff
-  lastCommand = "rc 0 0 0 0"; // this is basic hover
+
+void processTakeoff()
+{
+    writeFile(SPIFFS, flightFilePath, "command,2\n");
+    appendFile(SPIFFS, flightFilePath, "battery?,2\n");
+    run_command("takeoff", 40);
+    digitalWrite(IN_FLIGHT, HIGH);
+    takeoff_time = millis();
+    last_since_takeoff = 0;
+    in_flight = true;
+    lastCommand = "takeoff";
+    appendLastCommand(); // Will be takeoff
+    lastCommand = "rc 0 0 0 0"; // This is basic hover
 }
 
-void onTakeoffButtonPressed() {
-  Serial.println("Takeoff button is pressed");
-  if (in_flight) {
-     processLand();
-  } else {
-     processTakeoff();
-  }
-  run_command("battery?", 10);
-  battery_check_tick = 0;
+
+void onTakeoffButtonPressed()
+{
+    Serial.println("Takeoff button is pressed");
+    if (in_flight) {
+        processLand();
+    }
+    else {
+        processTakeoff();
+    }
+    run_command("battery?", 10);
+    battery_check_tick = 0;
 }
 
 
 void setup(void)
 {
-    wm.setConfigPortalTimeout(45); // auto close configportal after 45 seconds
+    wm.setConfigPortalTimeout(45);  // Auto close configportal after 45 seconds
 
     // Init hardware serial
     Serial.begin(115200);
@@ -419,119 +574,220 @@ void setup(void)
     digitalWrite(LED_BATT_YELLOW, LOW);
     digitalWrite(COMMAND_TICK, LOW);
 
-  int rawValue = analogRead(VBATPIN);
-  float voltageLevel = (rawValue / 4095.0) * 2 * 1.1 * 3.3; // calculate voltage level
-  int batteryFraction = voltageLevel / MAX_BATTERY_VOLTAGE * 100;
-  Serial.print("Controller Battery %: " ); 
-  Serial.println(batteryFraction);
+    int rawValue = analogRead(VBATPIN);
+    float voltageLevel = (rawValue / 4095.0) * 2 * 1.1 * 3.3; // calculate voltage level
+    int batteryFraction = voltageLevel / MAX_BATTERY_VOLTAGE * 100;
+    Serial.print("Controller Battery %: " ); 
+    Serial.println(batteryFraction);
 
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  display.println("Controller Batt %:");
-  display.println(batteryFraction);
-  display.display();
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("Controller Batt %:");
+    display.println(batteryFraction);
+    display.display();
 
-  delay(2000);
-  
-  cwButton.begin();
-  ccwButton.begin();
-  takeoffButton.begin();
-  killButton.begin();
-  upButton.begin();
-  downButton.begin();
-  cwButton.onPressed(onCWButtonPressed);
-  ccwButton.onPressed(onCCWButtonPressed);
-  takeoffButton.onPressed(onTakeoffButtonPressed);
-  killButton.onPressed(onKillButtonPressed);
-  killButton.onSequence(2, 2000, onResetWiFiButtonPressed);
-  upButton.onPressed(onUpButtonPressed);
-  downButton.onPressed(onDownButtonPressed);
-  
-  connected = false;
-  WiFi.mode(WIFI_STA);
-  WiFi.onEvent(WiFiEvent);
+    delay(2000);
+
+    cwButton.begin();
+    ccwButton.begin();
+    takeoffButton.begin();
+    killButton.begin();
+    upButton.begin();
+    downButton.begin();
+    cwButton.onPressed(onCWButtonPressed);
+    ccwButton.onPressed(onCCWButtonPressed);
+    takeoffButton.onPressed(onTakeoffButtonPressed);
+    killButton.onPressed(onKillButtonPressed);
+    killButton.onSequence(2, 2000, onResetWiFiButtonPressed);
+    upButton.onPressed(onUpButtonPressed);
+    downButton.onPressed(onDownButtonPressed);
+
+    connected = false;
+    WiFi.mode(WIFI_STA);
+    WiFi.onEvent(WiFiEvent);
 
   // wm.resetSettings(); // uncomment to force new Tello Binding here
 
-  bool res;
-//  res = wm.autoConnect("ManageTello","telloadmin"); // password protected ap
-  res = wm.autoConnect(manageTello.c_str(),"telloadmin"); // password protected ap
-  if(!res) {
-    Serial.println("Failed to connect or hit timeout");
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.println("Reset Controller");
-    display.println("Use ManageTello AP");
-    display.println("On Phone or Computer");
-    display.println("To Connect to Tello");
-    display.display();
+    bool res;
+    res = wm.autoConnect("ManageTello","telloadmin"); // password protected ap
+    // res = wm.autoConnect(manageTello.c_str(),"telloadmin"); // password protected ap
+    if (!res) {
+        Serial.println("Failed to connect or hit timeout");
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println("Reset Controller");
+        display.println("Use ManageTello AP");
+        display.println("On Phone or Computer");
+        display.println("To Connect to Tello");
+        display.display();
 
-    // ESP.restart();
-  } 
-  else {
-    //if you get here you have connected to the WiFi    
-    Serial.println("connected with DroneBlocks controller to Tello WiFi :)");
-    tello_ssid = (String)wm.getWiFiSSID();
-  }  
+        // ESP.restart();
+    }
+    else {
+        //if you get here you have connected to the WiFi    
+        Serial.println("connected with DroneBlocks controller to Tello WiFi :)");
+        tello_ssid = (String)wm.getWiFiSSID();
+    }  
 }
-
-
-
-
-
-
 
 
 void loop()
 {
-    uint16_t timer = 0;
-
     mpu.update();
     mpuRoll = mpu.getAngleX();
     mpuPitch = mpu.getAngleY();
     mpuYaw = mpu.getAngleZ();
 
-    display.clearDisplay();
-    display.setCursor(0, 0);
+    yaw = 0;
+    throttle = 0;
 
-    // Turn LEDs OFF
-    if (abs(mpuRoll) <= 10) {
-        digitalWrite(LED_LEFT,LOW);
-        digitalWrite(LED_RIGHT,LOW);
-    }
-    if (abs(mpuPitch) <= 15) {
-        digitalWrite(LED_FORWARD,LOW);
-        digitalWrite(LED_BACK,LOW);
-    }
+    AbsPitch = abs(mpuPitch);
+    AbsRoll = abs(mpuRoll);
 
-    // Turn LEDs ON
-    // Move forward
-    if (mpuPitch < -16) {
-      digitalWrite(LED_FORWARD,HIGH);
-    }
+    takeoffButton.read();
+    killButton.read();
+    cwButton.read();
+    ccwButton.read();
+    upButton.read();
+    downButton.read();
 
-    // Move backward
-    if (mpuPitch > 16) {
-        digitalWrite(LED_BACK,HIGH);
+    if (AbsRoll <= 10) {
+        roll = 0;
+    }
+    if (AbsPitch <= 15) {
+        pitch = 0;
     }
 
-    // Move right
-    if (mpuRoll < -11) {
-        digitalWrite(LED_RIGHT,HIGH);
+    if (mpuPitch < -15) {
+        AbsPitch = constrain(AbsPitch, 20, 40);
+        switch (AbsPitch) {
+            case 20:
+                pitch = 20;
+            break;
+            case 40:
+                pitch = 40;
+            break;
+            default:
+                pitch = 30;
+                // pitchString = String(AbsPitch);
+            break;          
+        }
     }
 
-    // Move left
-    if (mpuRoll > 11) {
-        digitalWrite(LED_LEFT,HIGH);
+    if (mpuPitch > 15) {
+        AbsPitch = constrain(AbsPitch, 20, 40);
+        switch (AbsPitch) {
+            case 20:
+                pitch = -20;
+            break;
+            case 40:
+                pitch = -40;
+            break;
+            default:
+                pitch = -30;
+                // pitchString = "-" + AbsPitch;
+            break;          
+        }
     }
 
-    // Update display data every 100 ms
-    if ((millis()-timer) > 100) {
-        display.println("Roll: " + String(mpuRoll));
-        display.println("Pitch: " + String(mpuPitch));
-        display.println("Yaw: " + String(mpuYaw));
-        display.display();
-
-        timer = millis();  
+    if (mpuRoll < -10) {
+        AbsRoll = constrain(AbsRoll, 20, 40);
+        switch (AbsRoll) {
+            case 20:
+                roll = 20;
+            break;
+            case 40:
+                roll = 40;
+            break;
+            default:
+                roll = 30;
+                // rollString = String(AbsRoll);
+            break;          
+        }
     }
+
+    if (mpuRoll > 10) {
+        AbsRoll = constrain(AbsRoll, 20, 40);
+        switch (AbsRoll) {
+            case 20:
+                roll = -20;
+            break;
+            case 40:
+                roll = -40;
+            break;
+            default:
+                roll = -30;
+                // rollString = "-" + AbsRoll;
+            break;          
+        }
+    }
+
+    lastGestureCmd = gestureCmd;
+    //  gestureCmd = rcCmdBegin + rollString + " " + pitchString + rcCmdEnd;
+    gestureCmd = "rc ";
+    gestureCmd = gestureCmd + roll + " " + pitch + " " + throttle + " " + yaw;  
+    if (command_error) {
+        Serial.println("Command Error: Attempt to Land");
+        run_command("land", 40);
+        run_command("battery?", 30);
+        battery_check_tick = 0;
+        if (in_flight) {
+            digitalWrite(IN_FLIGHT,LOW);
+            in_flight = false;      
+        }
+        command_error = false;
+    }
+
+    // Tello nose direction is pilot perspective
+    if (in_flight) {
+        if (!gestureCmd.equals(lastGestureCmd) && !in_rc_btn_motion) {
+            lastCommand = lastGestureCmd;
+            appendLastCommand();
+            run_command(gestureCmd, 0);
+            Serial.println(gestureCmd);
+        }
+        else if (!in_rc_btn_motion && !inSerialMotion) {
+            lastCommand = "rc 0 0 0 0"; //default last command
+        }
+    }  
+
+    if (Serial.available()) {
+        String command = Serial.readStringUntil('\n');
+        char SSID[65];
+        if (command.length() == 0)
+            command = Serial.readStringUntil('\r');
+        if (command.length() > 0) {
+            command.trim();
+            if (command.startsWith("connect")) {
+                command.replace("connect", "");
+                command.trim();
+                strcpy(SSID, command.c_str());
+                WiFi.begin(SSID);
+            }
+            else if (command.startsWith("start")) {
+                inSerialMotion = true;
+                onTakeoffButtonPressed();
+            }
+            else if (command.startsWith("stop")) {
+                onTakeoffButtonPressed();
+                inSerialMotion = false;
+            }
+            else if (command.startsWith("replay")) {
+             processFlightReplay();
+            }
+            else if (command.startsWith("kill")) {
+                onKillButtonPressed();
+                inSerialMotion = false;
+            }
+            else if (connected) {
+                processSerialCommand(command);
+            }
+        }
+    }
+    if (battery_check_tick == BATTERY_CHECK_LIMIT) {
+        run_command("battery?", 10);
+        battery_check_tick = 0;
+    }
+    // delay(500);  
+    vTaskDelay(1);  
 }

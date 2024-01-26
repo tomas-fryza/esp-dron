@@ -28,7 +28,7 @@
 // https://image.dfrobot.com/image/data/DFR0654-F/Pinout.jpg
 #define LED_FORWARD  17
 #define LED_BACK     16
-#define LED_RIGHT    4
+#define LED_RIGHT    12
 #define LED_LEFT     12
 
 // Declaration for an SH1106 display connected to I2C (SDA, SCL pins)
@@ -75,6 +75,7 @@ void setup(void)
     delay(1000);
     mpu.calcOffsets();
     Serial.println("Done");
+    Serial.println("Start moving MPU6050");
     delay(100);
 
     // Configure LEDs
@@ -138,6 +139,11 @@ void loop()
         display.println("Pitch: " + String(mpuPitch));
         display.println("Yaw: " + String(mpuYaw));
         display.display();
+
+        // Update Serail monitor data as well
+        Serial.println("Roll: " + String(mpuRoll));
+        Serial.println("Pitch: " + String(mpuPitch));
+        Serial.println("Yaw: " + String(mpuYaw));
 
         timer = millis();  
     }

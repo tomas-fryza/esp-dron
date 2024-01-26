@@ -11,7 +11,8 @@
  *                   MPU6050_light (Version 1.1.0)
  *                   WiFiManager
  *                   EasyButton (Version 2.0.3)
- *                     In `EasyButtonTouch.h` comment lines 10--32
+ *                     (In .pio/libdeps/EasyButton/src/EasyButtonTouch.h
+ *                      comment lines 10--31 to disable `Filter.h`)
  *
  * License: MIT
  * 
@@ -26,8 +27,8 @@
  * 
  */
 
-#include "FS.h"
-#include "SPIFFS.h"
+// #include "FS.h"
+// #include "SPIFFS.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
@@ -42,7 +43,7 @@
 // https://image.dfrobot.com/image/data/DFR0654-F/Pinout.jpg
 #define LED_CONN_RED         17
 #define IN_FLIGHT            16
-#define LED_CONN_GREEN        4
+#define LED_CONN_GREEN       12
 #define LED_BATT_RED         12
 #define LED_BATT_YELLOW      12
 #define LED_BATT_GREEN       12
@@ -58,8 +59,8 @@
 
 #define FORMAT_SPIFFS_IF_FAILED true
 
-File flightFile;
-const char* flightFilePath = "/flight_file.txt";
+// File flightFile;
+// const char* flightFilePath = "/flight_file.txt";
 
 // Max LiPoly voltage of a 3.7 battery is 4.2
 const float MAX_BATTERY_VOLTAGE = 4.2;
@@ -273,7 +274,7 @@ void WiFiEvent(WiFiEvent_t event)
     }
 }
 
-
+/*
 void writeFile(fs::FS &fs, const char * path, const char * message)
 {
     Serial.printf("Writing file: %s\r\n", path);
@@ -332,11 +333,11 @@ void appendLastCommand()
     lastCommand = lastCommand + "," + commandDelay + "\n";
     appendFile(SPIFFS, flightFilePath, lastCommand.c_str());
 }
-
+*/
 
 void processCommand(String command)
 {
-    appendLastCommand();
+    // appendLastCommand();
     if (in_rc_btn_motion) {
         run_command("rc 0 0 0 0", 0);
         lastCommand = "rc 0 0 0 0";
@@ -353,14 +354,14 @@ void processCommand(String command)
 
 void processSerialCommand(String command)
 {
-    appendLastCommand();
+    // appendLastCommand();
     // Serial.println(command);
     run_command(command, 20);
     lastCommand = command;
     battery_check_tick++;
 }
 
-
+/*
 void processFlightReplay()
 {
     flightFile = SPIFFS.open(flightFilePath, FILE_READ);
@@ -393,7 +394,7 @@ void processFlightReplay()
         flightFile.close();
     }
 }
-
+*/
 
 // Callbacks
 void onResetWiFiButtonPressed()
@@ -465,20 +466,20 @@ void onKillButtonPressed()
         battery_check_tick++;
         digitalWrite(IN_FLIGHT,LOW);
         in_flight = false;
-        deleteFile(SPIFFS, flightFilePath);
+        // deleteFile(SPIFFS, flightFilePath);
     }
     else {
-        processFlightReplay();
+        // processFlightReplay();
     }
 }
 
 
 void processLand()
 {
-    appendLastCommand();
+    // appendLastCommand();
     run_command("land", 20);
-    appendFile(SPIFFS, flightFilePath, "land,2\n");
-    appendFile(SPIFFS, flightFilePath, "battery?,2\n");
+    // appendFile(SPIFFS, flightFilePath, "land,2\n");
+    // appendFile(SPIFFS, flightFilePath, "battery?,2\n");
     digitalWrite(IN_FLIGHT,LOW);
     in_flight = false;
 }
@@ -486,15 +487,15 @@ void processLand()
 
 void processTakeoff()
 {
-    writeFile(SPIFFS, flightFilePath, "command,2\n");
-    appendFile(SPIFFS, flightFilePath, "battery?,2\n");
+    // writeFile(SPIFFS, flightFilePath, "command,2\n");
+    // appendFile(SPIFFS, flightFilePath, "battery?,2\n");
     run_command("takeoff", 40);
     digitalWrite(IN_FLIGHT, HIGH);
     takeoff_time = millis();
     last_since_takeoff = 0;
     in_flight = true;
     lastCommand = "takeoff";
-    appendLastCommand(); // Will be takeoff
+    // appendLastCommand(); // Will be takeoff
     lastCommand = "rc 0 0 0 0"; // This is basic hover
 }
 
@@ -524,12 +525,12 @@ void setup(void)
     String manageTello = "ManageTello";
     // manageTello = manageTello + "456";
     Serial.println(manageTello);
-
+/*
     if( !SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED) ) {
         Serial.println("SPIFFS Mount Failed");
         return;
     }
-
+*/
     // Initialize OLED display with I2C address 0x3C
     // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
     display.begin(SH1106_SWITCHCAPVCC, 0x3C);
@@ -742,7 +743,7 @@ void loop()
     if (in_flight) {
         if (!gestureCmd.equals(lastGestureCmd) && !in_rc_btn_motion) {
             lastCommand = lastGestureCmd;
-            appendLastCommand();
+            // appendLastCommand();
             run_command(gestureCmd, 0);
             Serial.println(gestureCmd);
         }
@@ -772,9 +773,9 @@ void loop()
                 onTakeoffButtonPressed();
                 inSerialMotion = false;
             }
-            else if (command.startsWith("replay")) {
+            /*else if (command.startsWith("replay")) {
              processFlightReplay();
-            }
+            }*/
             else if (command.startsWith("kill")) {
                 onKillButtonPressed();
                 inSerialMotion = false;

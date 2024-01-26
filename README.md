@@ -1,5 +1,3 @@
 # esp-dron
 
-Examples by Peter:
-
-[https://techexplorations.com/blog/drones/empowering-education-exploring-open-source-hardware-drone-control-with-esp32-and-the-tello-api/](https://techexplorations.com/blog/drones/empowering-education-exploring-open-source-hardware-drone-control-with-esp32-and-the-tello-api/)
+Testing examples provided by Peter: [Empowering Education: Exploring Open Source Hardware Drone Control with ESP32 and the Tello API](https://techexplorations.com/blog/drones/empowering-education-exploring-open-source-hardware-drone-control-with-esp32-and-the-tello-api/)

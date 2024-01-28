@@ -41,50 +41,57 @@
 
 // Config pins
 // https://image.dfrobot.com/image/data/DFR0654-F/Pinout.jpg
-#define LED_CONN_RED         17
+// LEDs:
+// #define LED_CONN_RED      17
+#define LED_CONN_GREEN       17
 #define IN_FLIGHT            16
-#define LED_CONN_GREEN       12
 #define LED_BATT_RED         12
-#define LED_BATT_YELLOW      12
-#define LED_BATT_GREEN       12
-#define COMMAND_TICK         13
-#define UP_PIN               34
+// #define LED_BATT_GREEN       12
+// #define LED_BATT_YELLOW      12
+// #define COMMAND_TICK         13
+
+// Buttons:
 #define TAKEOFF_PIN          25
+#define KILL_PIN             26
+#define UP_PIN               34
+#define DOWN_PIN             14
 #define CW_PIN               32
 #define CCW_PIN              39
-#define KILL_PIN             26
-#define DOWN_PIN             14
+
+// How many commands before Tello battery
 #define BATTERY_CHECK_LIMIT  10
+
+// Controller battery pin
 #define VBATPIN              35
-
-#define FORMAT_SPIFFS_IF_FAILED true
-
-// File flightFile;
-// const char* flightFilePath = "/flight_file.txt";
 
 // Max LiPoly voltage of a 3.7 battery is 4.2
 const float MAX_BATTERY_VOLTAGE = 4.2;
 
+// #define FORMAT_SPIFFS_IF_FAILED true
+
+// File flightFile;
+// const char* flightFilePath = "/flight_file.txt";
+
 // IP address to send UDP data to:
-// either use the ip address of the server or 
-// a network broadcast address
+// Either use the ip address of the server or a network broadcast address
 const char * udpAddress = "192.168.10.1";
 const int udpPort = 8889;
 
-// Declaration for an SH1106 display connected to I2C (SDA, SCL pins)
+// Components:
+// OLED SH1106 display connected to I2C (SDA, SCL pins)
 #define OLED_RESET 4  // Reset pin
 Adafruit_SH1106 display(OLED_RESET);
 
+// Motion sensor
 MPU6050 mpu(Wire);
 
-WiFiManager wm;  // Global wm instance
-
-EasyButton cwButton(CW_PIN);
-EasyButton ccwButton(CCW_PIN);
+// Buttons
 EasyButton takeoffButton(TAKEOFF_PIN);
+EasyButton killButton(KILL_PIN);
 EasyButton upButton(UP_PIN);
 EasyButton downButton(DOWN_PIN);
-EasyButton killButton(KILL_PIN);
+EasyButton cwButton(CW_PIN);
+EasyButton ccwButton(CCW_PIN);
 
 // Motions: https://i.ytimg.com/vi/FXabvMSQNxA/maxresdefault.jpg
 int roll = 0;
@@ -105,11 +112,14 @@ String pitchString = "0";
 String rollString = "0";
 String gestureCmd = "rc 0 0 0 0";
 String lastGestureCmd = "rc 0 0 0 0";
-String lastCommand;
-unsigned long last_since_takeoff = 0;
-unsigned long this_since_takeoff = 0;
-unsigned long takeoff_time = 0;
-unsigned long commandDelay = 0;
+// String lastCommand;
+// unsigned long last_since_takeoff = 0;
+// unsigned long this_since_takeoff = 0;
+// unsigned long takeoff_time = 0;
+// unsigned long commandDelay = 0;
+
+// Global wm instance
+WiFiManager wm;
 
 // The UDP library class
 WiFiUDP udp;
@@ -118,7 +128,7 @@ WiFiUDP udp;
 boolean connected;
 boolean in_flight = false;
 boolean in_rc_btn_motion = false;
-boolean inSerialMotion = false;
+// boolean inSerialMotion = false;
 boolean command_error = false;
 boolean battery_checked = false;
 
@@ -140,7 +150,7 @@ void run_command(String command, int udp_delay_ticks)
 
     display.clearDisplay();
     display.setCursor(0, 0);
-    digitalWrite(COMMAND_TICK,LOW);
+    // digitalWrite(COMMAND_TICK, LOW);
     Serial.println(command);
     display.println("Command:");
     display.println(command);
@@ -154,14 +164,14 @@ void run_command(String command, int udp_delay_ticks)
     if (command.indexOf("rc ") >= 0) {
         udp_delay_ticks = 0;
         responseExpected = false;
-        digitalWrite(COMMAND_TICK,HIGH);
+        // digitalWrite(COMMAND_TICK, HIGH);
     }
 
     memset(buffer, 0, 50);
     command.getBytes(buffer, command.length()+1);
     // Only send data when connected
     // Send a packet
-    udp.beginPacket(udpAddress,udpPort);
+    udp.beginPacket(udpAddress, udpPort);
     udp.write(buffer, command.length()+1);
     udp.endPacket();
     // Serial.println("endPacket called");
@@ -170,7 +180,7 @@ void run_command(String command, int udp_delay_ticks)
 
     for (int x = 0; x < udp_delay_ticks; x++) {
         delay(500);
-        toggle_led(COMMAND_TICK);
+        // toggle_led(COMMAND_TICK);
         // Serial.print(x);
         packetSize = udp.parsePacket();
         if (packetSize)
@@ -179,40 +189,42 @@ void run_command(String command, int udp_delay_ticks)
 
     // Serial.println("packetSize: " + String(packetSize));
     if (packetSize && responseExpected) {
-        if (udp.read(buffer, 50) > 0){
-            digitalWrite(COMMAND_TICK,HIGH);
+        if (udp.read(buffer, 50) > 0) {
+            // digitalWrite(COMMAND_TICK, HIGH);
             String commandResponse = String((char *) buffer);
             Serial.println(commandResponse);
-            display.println("Response:");
+            display.println("Response: ");
             display.println(commandResponse);
             display.display();
 
             bool parseResponse = (commandResponse.indexOf("error") == -1) && (commandResponse.indexOf("ok") == -1);
             if (command.equalsIgnoreCase("battery?") && parseResponse) {
                 int battery = commandResponse.toInt();
-                if (battery > 60) {
-                    digitalWrite(LED_BATT_GREEN, HIGH);
-                    digitalWrite(LED_BATT_RED, LOW);
-                    digitalWrite(LED_BATT_YELLOW, LOW);
+                if (battery < 30) {
+                    // digitalWrite(LED_BATT_GREEN, LOW);
+                    digitalWrite(LED_BATT_RED, HIGH);
+                    // digitalWrite(LED_BATT_YELLOW, LOW);
                 }
-                else if (battery > 20) {
+                /* else if (battery > 20) {
                     digitalWrite(LED_BATT_GREEN, LOW);
                     digitalWrite(LED_BATT_RED, LOW);
                     digitalWrite(LED_BATT_YELLOW, HIGH);
                 }
-                else {
+                */
+                /* else {
                     digitalWrite(LED_BATT_GREEN, LOW);
                     digitalWrite(LED_BATT_RED, HIGH);
-                    digitalWrite(LED_BATT_YELLOW, LOW);
+                    // digitalWrite(LED_BATT_YELLOW, LOW);
                 }
+                */
             }
             else if (commandResponse.indexOf("timeout") >= 0) {
-                digitalWrite(COMMAND_TICK,LOW);
+                // digitalWrite(COMMAND_TICK, LOW);
                 Serial.println("Command timed out, ignoring for now");
             }
         }
         else {
-            digitalWrite(COMMAND_TICK,LOW);
+            // digitalWrite(COMMAND_TICK, LOW);
             command_error = true;
         }
     }
@@ -237,11 +249,11 @@ void WiFiEvent(WiFiEvent_t event)
             Serial.print("WiFi connected! IP address: ");
             Serial.println(WiFi.localIP());
             digitalWrite(LED_CONN_GREEN, HIGH);
-            digitalWrite(LED_CONN_RED, LOW);
+            // digitalWrite(LED_CONN_RED, LOW);
 
             // Initializes the UDP state
             // This initializes the transfer buffer
-            udp.begin(WiFi.localIP(),udpPort);
+            udp.begin(WiFi.localIP(), udpPort);
             connected = true;
             run_command("command", 20);
             run_command("battery?", 20);
@@ -262,10 +274,10 @@ void WiFiEvent(WiFiEvent_t event)
         case SYSTEM_EVENT_STA_DISCONNECTED:
             Serial.println("WiFi lost connection");
             digitalWrite(LED_CONN_GREEN, LOW);
-            digitalWrite(LED_CONN_RED, HIGH);
-            digitalWrite(LED_BATT_YELLOW, HIGH);
+            // digitalWrite(LED_CONN_RED, HIGH);
+            // digitalWrite(LED_BATT_YELLOW, HIGH);
             digitalWrite(LED_BATT_RED, LOW);
-            digitalWrite(LED_BATT_GREEN, LOW);
+            // digitalWrite(LED_BATT_GREEN, LOW);
             connected = false;
         break;
     
@@ -340,12 +352,12 @@ void processCommand(String command)
     // appendLastCommand();
     if (in_rc_btn_motion) {
         run_command("rc 0 0 0 0", 0);
-        lastCommand = "rc 0 0 0 0";
+        // lastCommand = "rc 0 0 0 0";
         in_rc_btn_motion = false;
     }
     else {
         run_command(command, 0);
-        lastCommand = command;
+        // lastCommand = command;
         in_rc_btn_motion = true;
     }
     battery_check_tick++;
@@ -357,7 +369,7 @@ void processSerialCommand(String command)
     // appendLastCommand();
     // Serial.println(command);
     run_command(command, 20);
-    lastCommand = command;
+    // lastCommand = command;
     battery_check_tick++;
 }
 
@@ -367,7 +379,7 @@ void processFlightReplay()
     flightFile = SPIFFS.open(flightFilePath, FILE_READ);
     if (flightFile) {
         Serial.println("Start of Flight File...");
-        digitalWrite(IN_FLIGHT,HIGH);
+        digitalWrite(IN_FLIGHT, HIGH);
         in_flight = true;
 
         while (flightFile.available()) {
@@ -388,7 +400,7 @@ void processFlightReplay()
                 // Serial.println(command);
             }
         }
-        digitalWrite(IN_FLIGHT,LOW);
+        digitalWrite(IN_FLIGHT, LOW);
         in_flight = false;
         Serial.println("... end of Flight File");
         flightFile.close();
@@ -464,7 +476,7 @@ void onKillButtonPressed()
     if (in_flight) {
         run_command("emergency", 10);
         battery_check_tick++;
-        digitalWrite(IN_FLIGHT,LOW);
+        digitalWrite(IN_FLIGHT, LOW);
         in_flight = false;
         // deleteFile(SPIFFS, flightFilePath);
     }
@@ -480,7 +492,7 @@ void processLand()
     run_command("land", 20);
     // appendFile(SPIFFS, flightFilePath, "land,2\n");
     // appendFile(SPIFFS, flightFilePath, "battery?,2\n");
-    digitalWrite(IN_FLIGHT,LOW);
+    digitalWrite(IN_FLIGHT, LOW);
     in_flight = false;
 }
 
@@ -491,12 +503,12 @@ void processTakeoff()
     // appendFile(SPIFFS, flightFilePath, "battery?,2\n");
     run_command("takeoff", 40);
     digitalWrite(IN_FLIGHT, HIGH);
-    takeoff_time = millis();
-    last_since_takeoff = 0;
+    // takeoff_time = millis();
+    // last_since_takeoff = 0;
     in_flight = true;
-    lastCommand = "takeoff";
+    // lastCommand = "takeoff";
     // appendLastCommand(); // Will be takeoff
-    lastCommand = "rc 0 0 0 0"; // This is basic hover
+    // lastCommand = "rc 0 0 0 0"; // This is basic hover
 }
 
 
@@ -533,7 +545,7 @@ void setup(void)
 */
     // Initialize OLED display with I2C address 0x3C
     // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-    display.begin(SH1106_SWITCHCAPVCC, 0x3C);
+    display.begin(SH1106_SWITCHCAPVCC, 0x3c);
     delay(500);
     display.display();
     display.setTextSize(1);
@@ -560,23 +572,24 @@ void setup(void)
     delay(100);
 
     // Configure LEDs
-    pinMode(LED_CONN_RED, OUTPUT);
+    // pinMode(LED_CONN_RED, OUTPUT);
     pinMode(LED_CONN_GREEN, OUTPUT);
     pinMode(LED_BATT_RED, OUTPUT);
-    pinMode(LED_BATT_YELLOW, OUTPUT);
-    pinMode(LED_BATT_GREEN, OUTPUT);
-    pinMode(COMMAND_TICK, OUTPUT);
+    // pinMode(LED_BATT_GREEN, OUTPUT);
+    // pinMode(LED_BATT_YELLOW, OUTPUT);
+    // pinMode(COMMAND_TICK, OUTPUT);
     pinMode(IN_FLIGHT, OUTPUT);
+
+    // digitalWrite(LED_CONN_RED, HIGH);
     digitalWrite(LED_CONN_GREEN, LOW);
-    digitalWrite(IN_FLIGHT, LOW);
-    digitalWrite(LED_CONN_RED, HIGH);
     digitalWrite(LED_BATT_RED, LOW);
-    digitalWrite(LED_BATT_GREEN, LOW);
-    digitalWrite(LED_BATT_YELLOW, LOW);
-    digitalWrite(COMMAND_TICK, LOW);
+    // digitalWrite(LED_BATT_GREEN, LOW);
+    // digitalWrite(LED_BATT_YELLOW, LOW);
+    // digitalWrite(COMMAND_TICK, LOW);
+    digitalWrite(IN_FLIGHT, LOW);
 
     int rawValue = analogRead(VBATPIN);
-    float voltageLevel = (rawValue / 4095.0) * 2 * 1.1 * 3.3; // calculate voltage level
+    float voltageLevel = (rawValue / 4095.0) * 2 * 1.1 * 3.3;
     int batteryFraction = voltageLevel / MAX_BATTERY_VOLTAGE * 100;
     Serial.print("Controller Battery %: " ); 
     Serial.println(batteryFraction);
@@ -727,13 +740,14 @@ void loop()
     //  gestureCmd = rcCmdBegin + rollString + " " + pitchString + rcCmdEnd;
     gestureCmd = "rc ";
     gestureCmd = gestureCmd + roll + " " + pitch + " " + throttle + " " + yaw;  
+
     if (command_error) {
         Serial.println("Command Error: Attempt to Land");
         run_command("land", 40);
         run_command("battery?", 30);
         battery_check_tick = 0;
         if (in_flight) {
-            digitalWrite(IN_FLIGHT,LOW);
+            digitalWrite(IN_FLIGHT, LOW);
             in_flight = false;      
         }
         command_error = false;
@@ -742,16 +756,18 @@ void loop()
     // Tello nose direction is pilot perspective
     if (in_flight) {
         if (!gestureCmd.equals(lastGestureCmd) && !in_rc_btn_motion) {
-            lastCommand = lastGestureCmd;
+            // lastCommand = lastGestureCmd;
             // appendLastCommand();
             run_command(gestureCmd, 0);
             Serial.println(gestureCmd);
         }
-        else if (!in_rc_btn_motion && !inSerialMotion) {
-            lastCommand = "rc 0 0 0 0"; //default last command
-        }
+        // else if (!in_rc_btn_motion && !inSerialMotion) {
+        //     // lastCommand = "rc 0 0 0 0"; //default last command
+        // }
     }  
 
+    // Commands from serial monitor
+    /*
     if (Serial.available()) {
         String command = Serial.readStringUntil('\n');
         char SSID[65];
@@ -773,9 +789,9 @@ void loop()
                 onTakeoffButtonPressed();
                 inSerialMotion = false;
             }
-            /*else if (command.startsWith("replay")) {
-             processFlightReplay();
-            }*/
+            // else if (command.startsWith("replay")) {
+            //     processFlightReplay();
+            // }
             else if (command.startsWith("kill")) {
                 onKillButtonPressed();
                 inSerialMotion = false;
@@ -785,6 +801,8 @@ void loop()
             }
         }
     }
+    */
+
     if (battery_check_tick == BATTERY_CHECK_LIMIT) {
         run_command("battery?", 10);
         battery_check_tick = 0;
